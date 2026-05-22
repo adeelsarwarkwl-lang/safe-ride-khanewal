@@ -1,47 +1,85 @@
 
 import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
-import L from 'leaflet';
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
- iconRetinaUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
- iconUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
- shadowUrl:'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
-});
-function Picker({setLocation}) {
- useMapEvents({
-   click(e){ setLocation(e.latlng); }
- });
- return null;
-}
-export default function App(){
- const phone='923216899333';
- const [loc,setLoc]=useState({lat:30.1575,lng:71.5249});
- const useMyLocation=()=>navigator.geolocation?.getCurrentPosition((p)=>setLoc({lat:p.coords.latitude,lng:p.coords.longitude}));
- const submit=(e)=>{
-   e.preventDefault();
-   const d=new FormData(e.target);
-   const msg=`Safe Ride Booking\nName: ${d.get('name')}\nPickup: ${d.get('pickup')}\nService: ${d.get('service')}\nDestination: ${d.get('destination')}\nDate: ${d.get('date')}\nTime: ${d.get('time')}\nGPS: https://maps.google.com/?q=${loc.lat},${loc.lng}`;
-   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`,'_blank');
- };
- const input={width:'100%',padding:'10px',marginBottom:'10px',borderRadius:'10px',border:'1px solid #ccc'};
- return <div style={{background:'#f2f2f2',minHeight:'100vh',padding:'10px',fontFamily:'Arial'}}>
- <div style={{maxWidth:'450px',margin:'0 auto',background:'#fff',padding:'16px',borderRadius:'18px'}}>
- <h2 style={{textAlign:'center'}}>🛡️ Safe Ride Khanewal</h2>
- <button onClick={useMyLocation} style={{width:'100%',padding:'10px',marginBottom:'10px'}}>Use My Current Location</button>
- <MapContainer center={[loc.lat,loc.lng]} zoom={13} style={{height:'250px',width:'100%',marginBottom:'10px'}}>
- <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
- <Marker position={[loc.lat,loc.lng]} />
- <Picker setLocation={setLoc}/>
- </MapContainer>
- <div style={{fontSize:'12px',marginBottom:'10px'}}>Tap map to choose exact pickup location</div>
- <form onSubmit={submit}>
- <input style={input} name="name" placeholder="Your Name" required />
- <input style={input} name="pickup" placeholder="Pickup address/landmark" required />
- <select style={input} name="service"><option>Local Ride</option><option>Intercity Ride</option></select>
- <select style={input} name="destination"><option>Multan</option><option>Lahore</option><option>Faisalabad</option><option>Sahiwal</option><option>Bahawalpur</option></select>
- <input style={input} type="date" name="date" required />
- <input style={input} type="time" name="time" required />
- <button style={{width:'100%',padding:'12px',background:'#111',color:'#fff',border:'none',borderRadius:'10px'}}>Book on WhatsApp</button>
- </form></div></div>
+import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+
+export default function App() {
+  const phone='923216899333';
+  const [pickupText,setPickupText]=useState('');
+  const [destText,setDestText]=useState('');
+  const [pickup,setPickup]=useState(null);
+  const [dest,setDest]=useState(null);
+  const [route,setRoute]=useState([]);
+  const [fare,setFare]=useState(null);
+  const [eta,setEta]=useState(null);
+  const [distance,setDistance]=useState(null);
+
+  async function searchPlace(query, setter){
+    if(!query) return;
+    const q = encodeURIComponent(query + ', Punjab, Pakistan');
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}`);
+    const data = await res.json();
+    if(data[0]) setter({lat:parseFloat(data[0].lat), lng:parseFloat(data[0].lon)});
+  }
+
+  async function calcRoute(){
+    if(!pickup || !dest) return;
+    const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${pickup.lng},${pickup.lat};${dest.lng},${dest.lat}?overview=full&geometries=geojson`);
+    const data = await res.json();
+    if(data.routes?.[0]){
+      const r=data.routes[0];
+      setRoute(r.geometry.coordinates.map(c=>[c[1],c[0]]));
+      const km = r.distance/1000;
+      const mins = Math.round(r.duration/60);
+      setDistance(km.toFixed(1));
+      setEta(mins);
+      const est = Math.round(250 + km*40);
+      setFare(est);
+    }
+  }
+
+  function useCurrent(){
+    navigator.geolocation?.getCurrentPosition(p=>{
+      setPickup({lat:p.coords.latitude,lng:p.coords.longitude});
+      setPickupText('Current Location');
+    });
+  }
+
+  function book(){
+    const msg = `Safe Ride Khanewal Quote Request
+Pickup: ${pickupText}
+Destination: ${destText}
+Distance: ${distance||'-'} km
+ETA: ${eta||'-'} mins
+Estimated Fare: Rs ${fare||'-'}
+Pickup GPS: https://maps.google.com/?q=${pickup?.lat},${pickup?.lng}`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`,'_blank');
+  }
+
+  const input={width:'100%',padding:'12px',marginBottom:'10px',border:'1px solid #ccc',borderRadius:'10px'};
+  return <div style={{padding:10,background:'#f3f3f3',minHeight:'100vh',fontFamily:'Arial'}}>
+    <div style={{maxWidth:480,margin:'0 auto',background:'#fff',padding:16,borderRadius:16}}>
+      <h2>🛡️ Safe Ride Khanewal</h2>
+      <button onClick={useCurrent} style={input}>Use My Current Location</button>
+      <input style={input} value={pickupText} onChange={e=>setPickupText(e.target.value)} placeholder="Pickup (e.g. Rehman Colony Khanewal)" />
+      <button onClick={()=>searchPlace(pickupText,setPickup)} style={input}>Search Pickup</button>
+      <input style={input} value={destText} onChange={e=>setDestText(e.target.value)} placeholder="Destination in Punjab (e.g. DHA Lahore)" />
+      <button onClick={()=>searchPlace(destText,setDest)} style={input}>Search Destination</button>
+      <button onClick={calcRoute} style={{...input, background:'#111', color:'#fff'}}>Calculate Fare</button>
+
+      <MapContainer center={[30.1575,71.5249]} zoom={7} style={{height:300,width:'100%'}}>
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
+        {pickup && <Marker position={[pickup.lat,pickup.lng]} />}
+        {dest && <Marker position={[dest.lat,dest.lng]} />}
+        {route.length>0 && <Polyline positions={route} />}
+      </MapContainer>
+
+      {fare && <div style={{padding:12}}>
+        <p><b>Distance:</b> {distance} km</p>
+        <p><b>ETA:</b> {eta} mins</p>
+        <p><b>Estimated Fare:</b> Rs {fare}</p>
+        <button onClick={book} style={{...input, background:'green', color:'#fff'}}>Request Quote on WhatsApp</button>
+      </div>}
+    </div>
+  </div>
 }
